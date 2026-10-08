@@ -637,15 +637,39 @@ public partial class MainWindow : Window
         }
 
         e.Cancel = true;
-        HideToTray();
+        QueueHideToTray();
+    }
+
+    private void QueueHideToTray()
+    {
+        Dispatcher.BeginInvoke(new Action(HideToTray));
     }
 
     private void HideToTray()
     {
+        if (_allowExit || !IsVisible)
+        {
+            return;
+        }
+
+        _padHover = false;
         _dotStoryboard?.Stop();
-        ShowInTaskbar = false;
+        if (_fullscreen)
+        {
+            ExitFullscreen();
+        }
+
         Hide();
-        BindHandle();
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_allowExit || IsVisible)
+            {
+                return;
+            }
+
+            ShowInTaskbar = false;
+            BindHandle();
+        }));
     }
 
     private void OnVisibleChanged(object sender, DependencyPropertyChangedEventArgs e) => UpdateDot();
@@ -720,6 +744,13 @@ public partial class MainWindow : Window
 
     private IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (!_allowExit && IsTaskbarClose(msg, wParam))
+        {
+            handled = true;
+            QueueHideToTray();
+            return IntPtr.Zero;
+        }
+
         if (msg == NativeMethods.WmShowMain)
         {
             handled = true;
@@ -754,6 +785,19 @@ public partial class MainWindow : Window
         }
 
         return IntPtr.Zero;
+    }
+
+    private static bool IsTaskbarClose(int msg, IntPtr wParam)
+    {
+        const int wmClose = 0x0010;
+        const int wmSysCommand = 0x0112;
+        const int scClose = 0xF060;
+        if (msg == wmClose)
+        {
+            return true;
+        }
+
+        return msg == wmSysCommand && (wParam.ToInt32() & 0xFFF0) == scClose;
     }
 
     private static string? MarshalString(IntPtr pointer)
