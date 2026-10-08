@@ -328,8 +328,14 @@ public partial class MainWindow : Window
 
             bool expected = !device.IsEnabled;
             SetTouchpadVisual(expected, false);
-            bool ok = await Task.Run(() => DeviceService.TrySetEnabled(device.InstanceId, expected, out bool actual) && actual == expected);
-            bool actualState = ok ? expected : await ReadActualAsync(device.InstanceId, expected);
+            bool ok = false;
+            bool reported = expected;
+            await Task.Run(() =>
+            {
+                ok = DeviceService.TrySetEnabled(device.InstanceId, expected, out bool actual);
+                reported = actual;
+            });
+            bool actualState = ok ? reported : await ReadActualAsync(device.InstanceId, reported);
             SetTouchpadVisual(actualState, actualState == expected);
             if (ok && actualState == expected)
             {
@@ -355,18 +361,7 @@ public partial class MainWindow : Window
 
     private static async Task<bool> ReadActualAsync(string instanceId, bool fallback)
     {
-        TouchpadDevice? fresh = await Task.Run(() =>
-        {
-            foreach (TouchpadDevice candidate in DeviceService.ListCandidates())
-            {
-                if (candidate.InstanceId == instanceId)
-                {
-                    return candidate;
-                }
-            }
-
-            return DeviceService.Resolve();
-        });
+        TouchpadDevice? fresh = await Task.Run(() => DeviceService.Find(instanceId));
         return fresh == null ? fallback : fresh.IsEnabled;
     }
 
