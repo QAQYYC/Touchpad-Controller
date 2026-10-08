@@ -1,11 +1,14 @@
 @echo off
 cd /d "%~dp0"
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-    exit /b
+set "EXE=%USERPROFILE%\Desktop\触摸板开关.exe"
+if not exist "%EXE%" set "EXE=%~dp0dist\触摸板开关.exe"
+if not exist "%EXE%" (
+    echo 找不到触摸板开关.exe
+    pause
+    exit /b 1
 )
-chcp 65001 >nul
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0TouchpadApp.ps1" -Uninstall
+"%EXE%" --uninstall
+del /f /q "%USERPROFILE%\Desktop\触摸板开关.exe" 2>nul
+echo 已卸载触摸板开关。
 echo.
 pause

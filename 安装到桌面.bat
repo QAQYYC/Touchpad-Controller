@@ -1,13 +1,8 @@
 @echo off
 cd /d "%~dp0"
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-    exit /b
-)
-chcp 65001 >nul
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0TouchpadApp.ps1" -Install
-if %errorlevel% neq 0 (
-    echo.
+if not exist "%~dp0dist\触摸板开关.exe" (
+    echo 找不到 dist\触摸板开关.exe
     pause
+    exit /b 1
 )
+"%~dp0dist\触摸板开关.exe" --install
