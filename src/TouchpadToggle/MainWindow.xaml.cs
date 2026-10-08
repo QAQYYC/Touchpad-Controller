@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private bool _fullscreen;
     private bool _allowExit;
     private bool _opening;
+    private bool _padHover;
     private bool _fillingList;
     private bool _prepared;
     private Rect _restore;
@@ -60,6 +61,14 @@ public partial class MainWindow : Window
         ApplyTheme();
         HotkeyValue.Text = FormatHotkey(_settings.Modifiers, _settings.VirtualKey);
         Pad.SizeChanged += (_, _) => PadSlash.Height = Math.Max(48, Pad.ActualHeight * 0.62);
+        foreach (Button button in new[] { FullScreenButton, MinButton, CloseButton })
+        {
+            button.RenderTransformOrigin = new Point(0.5, 0.5);
+            button.RenderTransform = new ScaleTransform(1, 1);
+            button.MouseEnter += (_, _) => AnimateScale((ScaleTransform)button.RenderTransform, 1.18);
+            button.MouseLeave += (_, _) => AnimateScale((ScaleTransform)button.RenderTransform, 1);
+        }
+
         EnsureDotStoryboard();
     }
 
@@ -95,12 +104,23 @@ public partial class MainWindow : Window
         _allowExit = true;
         try { NativeMethods.UnregisterHotKey(_hwnd, NativeMethods.HotkeyId); } catch { }
         _dotStoryboard?.Stop();
+        FnHotkey.Stop();
         if (_tray != null)
         {
             _tray.Visible = false;
             _tray.Dispose();
             _tray = null;
         }
+    }
+
+    internal void TriggerHotkey()
+    {
+        if (_capturing || _toggleBusy)
+        {
+            return;
+        }
+
+        _ = ToggleAsync();
     }
 
     public void ShowFromUser()
@@ -262,17 +282,18 @@ public partial class MainWindow : Window
                 return;
             }
 
-            DeviceList.ItemsSource = await query;
+            System.Collections.Generic.List<TouchpadDevice> devices = await query;
+            DeviceList.ItemsSource = devices;
+            PickerCard.Visibility = Visibility.Visible;
+            Pad.Visibility = Visibility.Collapsed;
+            StatusText.Text = devices.Count == 0 ? "没有读到触摸板" : "请点选触摸板设备";
+            UpdateDot();
+            return;
         }
         finally
         {
             _fillingList = false;
         }
-
-        PickerCard.Visibility = Visibility.Visible;
-        Pad.Visibility = Visibility.Collapsed;
-        StatusText.Text = "请点选触摸板设备";
-        UpdateDot();
     }
 
     private void HidePicker()
@@ -430,8 +451,10 @@ public partial class MainWindow : Window
 
         _capturing = true;
         NativeMethods.UnregisterHotKey(_hwnd, NativeMethods.HotkeyId);
+        FnHotkey.Disarm();
+        FnHotkey.BeginCapture();
         HotkeyButton.Content = "请按下组合键";
-        HotkeyHint.Text = "至少包含 Ctrl、Alt、Shift 或 Win。按 Esc 取消";
+        HotkeyHint.Text = "至少包含 Ctrl、Alt、Shift、Win 或 Fn。按 Esc 取消";
         HotkeyHint.Visibility = Visibility.Visible;
         Activate();
         Focus();
@@ -472,9 +495,10 @@ public partial class MainWindow : Window
         if ((Keyboard.Modifiers & ModifierKeys.Alt) != 0) mods |= 1;
         if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0) mods |= 4;
         if ((Keyboard.Modifiers & ModifierKeys.Windows) != 0) mods |= 8;
+        if (FnHotkey.IsDown) mods |= FnHotkey.FnBit;
         if (mods == 0)
         {
-            HotkeyHint.Text = "请包含 Ctrl、Alt、Shift 或 Win";
+            HotkeyHint.Text = "请包含 Ctrl、Alt、Shift、Win 或 Fn";
             return;
         }
 
@@ -504,6 +528,7 @@ public partial class MainWindow : Window
     private void StopCapture(string? hint)
     {
         _capturing = false;
+        FnHotkey.EndCapture();
         HotkeyButton.Content = "更改快捷键";
         if (string.IsNullOrEmpty(hint))
         {
@@ -522,11 +547,38 @@ public partial class MainWindow : Window
     private bool RegisterHotkey()
     {
         NativeMethods.UnregisterHotKey(_hwnd, NativeMethods.HotkeyId);
+        if ((_settings.Modifiers & FnHotkey.FnBit) != 0)
+        {
+            FnHotkey.Disarm();
+            return FnHotkey.Attach(this, _settings.Modifiers, _settings.VirtualKey);
+        }
+
+        FnHotkey.Disarm();
         return NativeMethods.RegisterHotKey(
             _hwnd,
             NativeMethods.HotkeyId,
-            (uint)(_settings.Modifiers | (int)NativeMethods.ModNoRepeat),
+            (uint)((_settings.Modifiers & 0xF) | (int)NativeMethods.ModNoRepeat),
             (uint)_settings.VirtualKey);
+    }
+
+    private void OnPadEnter(object sender, MouseEventArgs e)
+    {
+        _padHover = true;
+        AnimateScale(PadScale, 1.045);
+        if (_shownOn != true)
+        {
+            AnimateOpacity(PadDot, 1, false);
+        }
+
+        UpdateDot();
+    }
+
+    private void OnPadLeave(object sender, MouseEventArgs e)
+    {
+        _padHover = false;
+        AnimateScale(PadScale, 1);
+        AnimateOpacity(PadDot, _shownOn == true ? 1 : 0, false);
+        UpdateDot();
     }
 
     private void OnFullScreenClick(object sender, RoutedEventArgs e)
@@ -806,11 +858,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool run = _shownOn == true && IsVisible && Pad.Visibility == Visibility.Visible;
+        bool run = (_shownOn == true || _padHover) && IsVisible && Pad.Visibility == Visibility.Visible;
         if (run)
         {
-            if (_dotStoryboard.GetCurrentState() != ClockState.Active)
+            double speed = _padHover ? 1.85 : 1;
+            bool running = _dotStoryboard.GetCurrentState() == ClockState.Active;
+            if (!running || Math.Abs(_dotStoryboard.SpeedRatio - speed) > 0.01)
             {
+                _dotStoryboard.Stop();
+                _dotStoryboard.SpeedRatio = speed;
                 _dotStoryboard.Begin();
             }
         }
@@ -823,9 +879,17 @@ public partial class MainWindow : Window
     private void EnsureDotStoryboard()
     {
         var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
-        var duration = TimeSpan.FromMilliseconds(2800);
-        var x = new DoubleAnimation(0, 96, duration) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
-        var y = new DoubleAnimation(0, 64, duration) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
+        var duration = TimeSpan.FromMilliseconds(2200);
+        var x = new DoubleAnimationUsingKeyFrames { Duration = duration, RepeatBehavior = RepeatBehavior.Forever };
+        var y = new DoubleAnimationUsingKeyFrames { Duration = duration, RepeatBehavior = RepeatBehavior.Forever };
+        x.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromPercent(0), ease));
+        x.KeyFrames.Add(new EasingDoubleKeyFrame(120, KeyTime.FromPercent(0.35), ease));
+        x.KeyFrames.Add(new EasingDoubleKeyFrame(36, KeyTime.FromPercent(0.7), ease));
+        x.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromPercent(1), ease));
+        y.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromPercent(0), ease));
+        y.KeyFrames.Add(new EasingDoubleKeyFrame(28, KeyTime.FromPercent(0.25), ease));
+        y.KeyFrames.Add(new EasingDoubleKeyFrame(72, KeyTime.FromPercent(0.62), ease));
+        y.KeyFrames.Add(new EasingDoubleKeyFrame(0, KeyTime.FromPercent(1), ease));
         Storyboard.SetTarget(x, DotTransform);
         Storyboard.SetTargetProperty(x, new PropertyPath(TranslateTransform.XProperty));
         Storyboard.SetTarget(y, DotTransform);
@@ -833,6 +897,26 @@ public partial class MainWindow : Window
         _dotStoryboard = new Storyboard();
         _dotStoryboard.Children.Add(x);
         _dotStoryboard.Children.Add(y);
+        UseFrameRate(_dotStoryboard);
+        UseFrameRate(x);
+        UseFrameRate(y);
+    }
+
+    private static void AnimateScale(ScaleTransform transform, double scale)
+    {
+        var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+        var duration = TimeSpan.FromMilliseconds(160);
+        var x = new DoubleAnimation(scale, duration) { EasingFunction = ease };
+        var y = new DoubleAnimation(scale, duration) { EasingFunction = ease };
+        UseFrameRate(x);
+        UseFrameRate(y);
+        transform.BeginAnimation(ScaleTransform.ScaleXProperty, x);
+        transform.BeginAnimation(ScaleTransform.ScaleYProperty, y);
+    }
+
+    private static void UseFrameRate(Timeline timeline)
+    {
+        Timeline.SetDesiredFrameRate(timeline, 120);
     }
 
     private static void MoveKnob(UIElement knob, double left, bool instant)
@@ -846,6 +930,7 @@ public partial class MainWindow : Window
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
         var animation = new DoubleAnimation(left, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
+        UseFrameRate(animation);
         knob.BeginAnimation(Canvas.LeftProperty, animation);
     }
 
@@ -860,6 +945,7 @@ public partial class MainWindow : Window
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
         var animation = new ColorAnimation(color, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
+        UseFrameRate(animation);
         brush.BeginAnimation(SolidColorBrush.ColorProperty, animation);
     }
 
@@ -874,6 +960,7 @@ public partial class MainWindow : Window
 
         var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
         var animation = new DoubleAnimation(opacity, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
+        UseFrameRate(animation);
         element.BeginAnimation(OpacityProperty, animation);
     }
 
@@ -952,6 +1039,7 @@ public partial class MainWindow : Window
     private static string FormatHotkey(int modifiers, int virtualKey)
     {
         var parts = new System.Collections.Generic.List<string>();
+        if ((modifiers & FnHotkey.FnBit) != 0) parts.Add("Fn");
         if ((modifiers & 2) != 0) parts.Add("Ctrl");
         if ((modifiers & 1) != 0) parts.Add("Alt");
         if ((modifiers & 4) != 0) parts.Add("Shift");

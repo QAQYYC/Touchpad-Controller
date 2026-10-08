@@ -31,7 +31,7 @@
 ### 使用
 
 - 点中间的滑钮，或按快捷键，在开启和关闭之间切换。默认快捷键是 `Ctrl+Alt+T`。
-- 「更改快捷键」后按下新的组合键。至少要带 Ctrl、Alt、Shift 或 Win 中的一个。`Esc` 取消录制。如果这个组合键已被占用，会提示并继续用原来的。
+- 「更改快捷键」后按下新的组合键。至少要带 Ctrl、Alt、Shift、Win 或 Fn 中的一个。`Esc` 取消录制。如果这个组合键已被占用，会提示并继续用原来的。Fn 由键盘扫描码识别，录制时按住 Fn 再按主键。
 - 外观可以选浅色、深色，或适应系统。适应系统时，只在 Windows 改变主题时跟着变。
 - 拖窗口边缘可以拉伸。右上角可以全屏，再按一次或按 `Esc` 退出全屏。全屏铺满当前屏幕，包括任务栏。
 - 「开机启动」可以单独关掉，不必卸载。
@@ -97,7 +97,7 @@ You can also skip the installer and double-click `dist/触摸板开关.exe`. The
 ### Use
 
 - Click the switch, or press the hotkey, to turn the touchpad on or off. The default hotkey is `Ctrl+Alt+T`.
-- Choose **更改快捷键** and press a new combination. It must include Ctrl, Alt, Shift, or Win. `Esc` cancels recording. If the combination is already taken, the app says so and keeps the previous hotkey.
+- Choose **更改快捷键** and press a new combination. It must include Ctrl, Alt, Shift, Win, or Fn. `Esc` cancels recording. If the combination is already taken, the app says so and keeps the previous hotkey. Fn is recognized from the keyboard scan code: hold Fn, then press the main key.
 - Appearance can be light, dark, or follow the system. Follow-system updates when Windows changes its theme.
 - Drag the window edges to resize. The button at the top right fills the current screen, including the taskbar. Press it again, or press `Esc`, to leave fullscreen.
 - **开机启动** can be turned off on its own, without uninstalling.

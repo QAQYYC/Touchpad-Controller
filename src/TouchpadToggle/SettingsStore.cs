@@ -63,7 +63,7 @@ internal static class SettingsStore
                 loaded.Theme = "system";
             }
 
-            if (loaded.Modifiers is < 1 or > 15)
+            if (loaded.Modifiers is < 1 or > 31)
             {
                 loaded.Modifiers = 3;
             }
