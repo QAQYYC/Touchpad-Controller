@@ -29,7 +29,7 @@ public partial class App : Application
 
         if (!Admin.IsElevated())
         {
-            if (!uninstall && show && SingleInstance.TrySignal())
+            if (!uninstall && show && SingleInstance.TryWakeAndWait())
             {
                 Shutdown();
                 return;
@@ -37,10 +37,16 @@ public partial class App : Application
 
             try
             {
+                NativeMethods.AllowSetForegroundWindow(unchecked((uint)-1));
                 Admin.RelaunchElevated(string.Join(" ", e.Args), uninstall);
             }
-            catch
+            catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
             {
+            }
+            catch (Exception ex)
+            {
+                Log(ex);
+                MessageBox.Show("需要管理员权限才能打开主窗口。", "触摸板开关");
             }
 
             Shutdown();
@@ -65,9 +71,10 @@ public partial class App : Application
             }
             catch
             {
-                if (show)
+                if (show && SingleInstance.TryWakeAndWait())
                 {
-                    SingleInstance.TrySignal();
+                    Shutdown();
+                    return;
                 }
 
                 Shutdown();
@@ -80,14 +87,16 @@ public partial class App : Application
             return;
         }
 
+        if (show)
+        {
+            ProcessControl.StopOtherCopies();
+        }
+
         if (!AcquireMutex())
         {
             if (show)
             {
-                for (int i = 0; i < 40 && !SingleInstance.TrySignal(); i++)
-                {
-                    Thread.Sleep(100);
-                }
+                SingleInstance.TryWakeAndWait();
             }
 
             Shutdown();
@@ -96,7 +105,7 @@ public partial class App : Application
 
         try
         {
-            NativeMethods.CreateShowEvent(AppPaths.ShowEventName);
+            NativeMethods.CreateIpcEvents();
         }
         catch (Exception ex)
         {
@@ -110,12 +119,25 @@ public partial class App : Application
         }
 
         ShortcutService.EnsureStartMenu();
-        _window = new MainWindow(settings);
-        _window.Prepare();
-        StartSignalLoop();
-        if (show)
+        try
         {
-            _window.ShowFromUser();
+            _window = new MainWindow(settings);
+            _window.Prepare();
+            StartSignalLoop();
+            if (show)
+            {
+                _window.ShowFromUser();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log(ex);
+            if (show)
+            {
+                MessageBox.Show("主窗口无法打开。\n" + ex.Message, "触摸板开关");
+            }
+
+            Shutdown();
         }
     }
 
@@ -221,7 +243,7 @@ public partial class App : Application
         return string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void Log(Exception exception)
+    internal static void Log(Exception exception)
     {
         try
         {

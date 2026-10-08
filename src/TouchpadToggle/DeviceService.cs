@@ -154,12 +154,18 @@ internal static class DeviceService
 
     private static ManagementObject? FindById(string instanceId)
     {
-        string escaped = instanceId.Replace("\\", "\\\\").Replace("'", "\\'");
-        using ManagementObjectSearcher searcher = CreateSearcher(
-            $"SELECT Name, PNPDeviceID, Status, ConfigManagerErrorCode, PNPClass FROM Win32_PnPEntity WHERE PNPDeviceID = '{escaped}'");
-        foreach (ManagementObject device in searcher.Get())
+        try
         {
-            return device;
+            string escaped = instanceId.Replace("\\", "\\\\").Replace("'", "\\'");
+            using ManagementObjectSearcher searcher = CreateSearcher(
+                $"SELECT Name, PNPDeviceID, Status, ConfigManagerErrorCode, PNPClass FROM Win32_PnPEntity WHERE PNPDeviceID = '{escaped}'");
+            foreach (ManagementObject device in searcher.Get())
+            {
+                return device;
+            }
+        }
+        catch
+        {
         }
 
         return null;
@@ -168,18 +174,24 @@ internal static class DeviceService
     private static List<TouchpadDevice> QueryClassDevices()
     {
         List<TouchpadDevice> list = new();
-        using ManagementObjectSearcher searcher = CreateSearcher(
-            "SELECT Name, PNPDeviceID, Status, ConfigManagerErrorCode, PNPClass FROM Win32_PnPEntity WHERE PNPClass = 'Mouse' OR PNPClass = 'HIDClass'");
-        foreach (ManagementObject device in searcher.Get())
+        try
         {
-            using (device)
+            using ManagementObjectSearcher searcher = CreateSearcher(
+                "SELECT Name, PNPDeviceID, Status, ConfigManagerErrorCode, PNPClass FROM Win32_PnPEntity WHERE PNPClass = 'Mouse' OR PNPClass = 'HIDClass'");
+            foreach (ManagementObject device in searcher.Get())
             {
-                TouchpadDevice model = ToModel(device);
-                if (!IsExcluded(model.Name, model.InstanceId))
+                using (device)
                 {
-                    list.Add(model);
+                    TouchpadDevice model = ToModel(device);
+                    if (!IsExcluded(model.Name, model.InstanceId))
+                    {
+                        list.Add(model);
+                    }
                 }
             }
+        }
+        catch
+        {
         }
 
         return list;
@@ -189,7 +201,9 @@ internal static class DeviceService
     {
         var scope = new ManagementScope(@"\\.\root\cimv2");
         scope.Options.EnablePrivileges = true;
-        return new ManagementObjectSearcher(scope, new ObjectQuery(query));
+        var searcher = new ManagementObjectSearcher(scope, new ObjectQuery(query));
+        searcher.Options.Timeout = TimeSpan.FromSeconds(6);
+        return searcher;
     }
 
     private static TouchpadDevice ToModel(ManagementObject device)

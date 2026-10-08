@@ -71,12 +71,7 @@ public partial class MainWindow : Window
         }
 
         _prepared = true;
-        var helper = new WindowInteropHelper(this);
-        _hwnd = helper.EnsureHandle();
-        NativeMethods.SetCorner(_hwnd, true);
-        _source = HwndSource.FromHwnd(_hwnd);
-        _source.AddHook(Hook);
-        RegisterHotkey();
+        BindHandle();
         try
         {
             using System.Drawing.Icon? associated = System.Drawing.Icon.ExtractAssociatedIcon(AppPaths.Exe);
@@ -110,35 +105,85 @@ public partial class MainWindow : Window
 
     public void ShowFromUser()
     {
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(new Action(ShowFromUser));
+            return;
+        }
+
+        try
+        {
+            Reveal();
+        }
+        catch (Exception ex)
+        {
+            App.Log(ex);
+        }
+
         if (_opening || _toggleBusy)
         {
             return;
         }
 
         _opening = true;
-        _ = ShowFromUserAsync();
+        _ = SyncAfterRevealAsync();
     }
 
-    private async Task ShowFromUserAsync()
+    private void Reveal()
+    {
+        ShowInTaskbar = true;
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        if (!IsVisible)
+        {
+            Show();
+        }
+
+        BindHandle();
+        NativeMethods.ForceForeground(_hwnd);
+        Activate();
+        NativeMethods.SignalAck();
+        UpdateDot();
+    }
+
+    private void BindHandle()
+    {
+        var helper = new WindowInteropHelper(this);
+        IntPtr hwnd = helper.Handle;
+        if (hwnd == IntPtr.Zero)
+        {
+            hwnd = helper.EnsureHandle();
+        }
+
+        if (hwnd == _hwnd && _source != null)
+        {
+            NativeMethods.AllowShowMessage(hwnd);
+            return;
+        }
+
+        _source?.RemoveHook(Hook);
+        _hwnd = hwnd;
+        _source = HwndSource.FromHwnd(_hwnd);
+        _source?.AddHook(Hook);
+        NativeMethods.AllowShowMessage(_hwnd);
+        NativeMethods.SetCorner(_hwnd, !_fullscreen);
+        RegisterHotkey();
+    }
+
+    private async Task SyncAfterRevealAsync()
     {
         try
         {
             await SyncAsync();
-            ShowInTaskbar = true;
-            if (!IsVisible)
-            {
-                Show();
-            }
-
-            if (WindowState == WindowState.Minimized)
-            {
-                WindowState = WindowState.Normal;
-            }
-
-            Activate();
-            NativeMethods.ShowWindow(_hwnd, 9);
-            NativeMethods.SetForegroundWindow(_hwnd);
             UpdateDot();
+        }
+        catch (Exception ex)
+        {
+            App.Log(ex);
+            StatusText.Text = "未能读取触摸板状态";
         }
         finally
         {
@@ -158,14 +203,35 @@ public partial class MainWindow : Window
         try { startup = StartupTask.Exists(); } catch { }
         SetStartupVisual(startup, _startupShown == null || _startupShown == startup);
 
+        if (_shownOn == null)
+        {
+            StatusText.Text = "正在读取触摸板状态";
+        }
+
         TouchpadDevice? device = null;
+        bool timedOut = false;
         try
         {
-            device = await Task.Run(DeviceService.Resolve);
+            Task<TouchpadDevice?> query = Task.Run(DeviceService.Resolve);
+            if (await Task.WhenAny(query, Task.Delay(TimeSpan.FromSeconds(8))) != query)
+            {
+                timedOut = true;
+            }
+            else
+            {
+                device = await query;
+            }
         }
         catch
         {
             device = null;
+        }
+
+        if (timedOut)
+        {
+            StatusText.Text = "读取触摸板超时";
+            UpdateTray();
+            return;
         }
 
         if (device == null)
@@ -186,7 +252,17 @@ public partial class MainWindow : Window
         _fillingList = true;
         try
         {
-            DeviceList.ItemsSource = await Task.Run(DeviceService.ListCandidates);
+            Task<System.Collections.Generic.List<TouchpadDevice>> query = Task.Run(DeviceService.ListCandidates);
+            if (await Task.WhenAny(query, Task.Delay(TimeSpan.FromSeconds(8))) != query)
+            {
+                StatusText.Text = "读取设备超时";
+                PickerCard.Visibility = Visibility.Visible;
+                Pad.Visibility = Visibility.Collapsed;
+                UpdateDot();
+                return;
+            }
+
+            DeviceList.ItemsSource = await query;
         }
         finally
         {
@@ -517,6 +593,7 @@ public partial class MainWindow : Window
         _dotStoryboard?.Stop();
         ShowInTaskbar = false;
         Hide();
+        BindHandle();
     }
 
     private void OnVisibleChanged(object sender, DependencyPropertyChangedEventArgs e) => UpdateDot();
@@ -555,7 +632,7 @@ public partial class MainWindow : Window
         _toggleItem = new Forms.ToolStripMenuItem("切换触摸板");
         _startupItem = new Forms.ToolStripMenuItem("开机启动");
         Forms.ToolStripMenuItem exit = new("退出");
-        open.Click += (_, _) => ShowFromUser();
+        open.Click += (_, _) => Dispatcher.BeginInvoke(new Action(ShowFromUser));
         _toggleItem.Click += async (_, _) => await ToggleAsync();
         _startupItem.Click += (_, _) => ToggleStartup();
         exit.Click += (_, _) => ExitApp();
@@ -569,7 +646,14 @@ public partial class MainWindow : Window
         {
             if (args.Button == Forms.MouseButtons.Left)
             {
-                ShowFromUser();
+                Dispatcher.BeginInvoke(new Action(ShowFromUser));
+            }
+        };
+        _tray.MouseClick += (_, args) =>
+        {
+            if (args.Button == Forms.MouseButtons.Left)
+            {
+                Dispatcher.BeginInvoke(new Action(ShowFromUser));
             }
         };
         UpdateTray();
@@ -584,6 +668,13 @@ public partial class MainWindow : Window
 
     private IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (msg == NativeMethods.WmShowMain)
+        {
+            handled = true;
+            Dispatcher.BeginInvoke(new Action(ShowFromUser));
+            return IntPtr.Zero;
+        }
+
         if (msg == NativeMethods.WmHotkey)
         {
             handled = true;

@@ -8,6 +8,7 @@ internal static class NativeMethods
     public const int WmHotkey = 0x0312;
     public const int WmNcHitTest = 0x0084;
     public const int WmSettingChange = 0x001A;
+    public const int WmShowMain = 0x8001;
     public const int HtClient = 1;
     public const int HtLeft = 10;
     public const int HtRight = 11;
@@ -35,6 +36,39 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll")]
+    public static extern bool AllowSetForegroundWindow(uint processId);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? className, string windowName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
+
+    [DllImport("user32.dll")]
+    private static extern bool ChangeWindowMessageFilterEx(IntPtr hWnd, uint msg, uint action, IntPtr changeInfo);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetEvent(IntPtr hEvent);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -110,8 +144,72 @@ internal static class NativeMethods
         string name);
 
     public static IntPtr showEventHandle = IntPtr.Zero;
+    public static IntPtr ackEventHandle = IntPtr.Zero;
 
-    public static void CreateShowEvent(string name)
+    public static void CreateIpcEvents()
+    {
+        showEventHandle = CreateNamedEvent(AppPaths.ShowEventName, false);
+        ackEventHandle = CreateNamedEvent(AppPaths.AckEventName, true);
+    }
+
+    public static void AllowShowMessage(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        ChangeWindowMessageFilterEx(hwnd, WmShowMain, 1, IntPtr.Zero);
+    }
+
+    public static void PostShowMain()
+    {
+        IntPtr hwnd = FindWindow(null, "触摸板开关");
+        if (hwnd != IntPtr.Zero)
+        {
+            PostMessage(hwnd, WmShowMain, IntPtr.Zero, IntPtr.Zero);
+        }
+    }
+
+    public static void SignalAck()
+    {
+        if (ackEventHandle != IntPtr.Zero)
+        {
+            SetEvent(ackEventHandle);
+        }
+    }
+
+    public static void ForceForeground(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        ShowWindow(hwnd, 9);
+        IntPtr foreground = GetForegroundWindow();
+        uint foreThread = GetWindowThreadProcessId(foreground, out _);
+        uint current = GetCurrentThreadId();
+        bool attached = false;
+        if (foreThread != 0 && foreThread != current)
+        {
+            attached = AttachThreadInput(foreThread, current, true);
+        }
+
+        IntPtr topmost = new(-1);
+        IntPtr notTopmost = new(-2);
+        const uint flags = 0x0001 | 0x0002 | 0x0040;
+        BringWindowToTop(hwnd);
+        SetWindowPos(hwnd, topmost, 0, 0, 0, 0, flags);
+        SetWindowPos(hwnd, notTopmost, 0, 0, 0, 0, flags);
+        SetForegroundWindow(hwnd);
+        if (attached)
+        {
+            AttachThreadInput(foreThread, current, false);
+        }
+    }
+
+    private static IntPtr CreateNamedEvent(string name, bool manualReset)
     {
         if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
                 "D:(A;;0x1F0003;;;WD)S:(ML;;NW;;;LW)",
@@ -128,12 +226,12 @@ internal static class NativeMethods
             SecurityDescriptor = descriptor,
             InheritHandle = 0
         };
-        IntPtr handle = CreateEvent(ref attributes, false, false, name);
+        IntPtr handle = CreateEvent(ref attributes, manualReset, false, name);
         if (handle == IntPtr.Zero)
         {
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
         }
 
-        showEventHandle = handle;
+        return handle;
     }
 }

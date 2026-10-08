@@ -46,6 +46,23 @@ internal static class SingleInstance
             return false;
         }
     }
+
+    public static bool TryWakeAndWait()
+    {
+        try
+        {
+            using EventWaitHandle ack = EventWaitHandle.OpenExisting(AppPaths.AckEventName);
+            ack.Reset();
+            NativeMethods.AllowSetForegroundWindow(unchecked((uint)-1));
+            NativeMethods.PostShowMain();
+            TrySignal();
+            return ack.WaitOne(1200);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 }
 
 internal static class StartupTask

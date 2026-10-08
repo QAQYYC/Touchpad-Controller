@@ -18,6 +18,7 @@ internal static class AppPaths
     public const string AppId = "Xiaomi.BookPro14.TouchpadToggle";
     public const string TaskName = "XiaomiTouchpadToggle";
     public const string ShowEventName = "Local\\XiaomiTouchpadToggle.Show";
+    public const string AckEventName = "Local\\XiaomiTouchpadToggle.Ack";
     public const string MutexName = "Local\\XiaomiTouchpadToggle";
 
     public static string Exe => Environment.ProcessPath ?? "";
