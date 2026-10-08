@@ -37,6 +37,8 @@ public partial class MainWindow : Window
     private Forms.ToolStripMenuItem? _toggleItem;
     private Forms.ToolStripMenuItem? _startupItem;
     private Storyboard? _dotStoryboard;
+    private bool _dotClock;
+    private double _dotSpeed = -1;
     private bool? _shownOn;
     private bool? _startupShown;
     private bool _toggleBusy;
@@ -103,7 +105,7 @@ public partial class MainWindow : Window
     {
         _allowExit = true;
         try { NativeMethods.UnregisterHotKey(_hwnd, NativeMethods.HotkeyId); } catch { }
-        _dotStoryboard?.Stop();
+        StopDot();
         FnHotkey.Stop();
         if (_tray != null)
         {
@@ -648,7 +650,7 @@ public partial class MainWindow : Window
         }
 
         _padHover = false;
-        _dotStoryboard?.Stop();
+        StopDot();
         if (_fullscreen)
         {
             ExitFullscreen();
@@ -897,21 +899,56 @@ public partial class MainWindow : Window
             return;
         }
 
-        bool run = (_shownOn == true || _padHover) && IsVisible && Pad.Visibility == Visibility.Visible;
-        if (run)
+        try
         {
-            double speed = _padHover ? 1.85 : 1;
-            bool running = _dotStoryboard.GetCurrentState() == ClockState.Active;
-            if (!running || Math.Abs(_dotStoryboard.SpeedRatio - speed) > 0.01)
+            bool run = (_shownOn == true || _padHover) && IsVisible && Pad.Visibility == Visibility.Visible;
+            if (!run)
             {
-                _dotStoryboard.Stop();
+                StopDot();
+                return;
+            }
+
+            double speed = _padHover ? 1.85 : 1;
+            if (!_dotClock)
+            {
                 _dotStoryboard.SpeedRatio = speed;
-                _dotStoryboard.Begin();
+                _dotStoryboard.Begin(this, true);
+                _dotClock = true;
+                _dotSpeed = speed;
+                return;
+            }
+
+            if (Math.Abs(_dotSpeed - speed) > 0.01)
+            {
+                _dotStoryboard.SetSpeedRatio(this, speed);
+                _dotSpeed = speed;
             }
         }
-        else
+        catch (Exception ex)
         {
-            _dotStoryboard.Stop();
+            App.Log(ex);
+        }
+    }
+
+    private void StopDot()
+    {
+        if (_dotStoryboard == null || !_dotClock)
+        {
+            return;
+        }
+
+        try
+        {
+            _dotStoryboard.Stop(this);
+        }
+        catch (Exception ex)
+        {
+            App.Log(ex);
+        }
+        finally
+        {
+            _dotClock = false;
+            _dotSpeed = -1;
         }
     }
 
